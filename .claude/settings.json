@@ -1,0 +1,17 @@
+{
+  "enabledPlugins": {
+    "orchestrator@dev-workflow": true,
+    "task-planner@dev-workflow": true,
+    "coder@dev-workflow": true,
+    "code-reviewer@dev-workflow": true,
+    "tester@dev-workflow": true
+  },
+  "extraKnownMarketplaces": {
+    "dev-workflow": {
+      "source": {
+        "source": "directory",
+        "path": "/Users/noah/topdatasec/security-audit/.claude/skills/dev-workflow"
+      }
+    }
+  }
+}

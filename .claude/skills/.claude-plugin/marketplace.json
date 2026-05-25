@@ -1,0 +1,31 @@
+{
+  "name": "dev-workflow",
+  "owner": { "name": "noah" },
+  "plugins": [
+    {
+      "name": "orchestrator",
+      "source": "./orchestrator",
+      "description": "Full dev workflow orchestrator: plan → code → CR → test"
+    },
+    {
+      "name": "task-planner",
+      "source": "./task-planner",
+      "description": "Break down a PRD into a structured tasks.json"
+    },
+    {
+      "name": "coder",
+      "source": "./coder",
+      "description": "Implement a single task from tasks.json"
+    },
+    {
+      "name": "code-reviewer",
+      "source": "./code-reviewer",
+      "description": "Review code changes against acceptance criteria"
+    },
+    {
+      "name": "tester",
+      "source": "./tester",
+      "description": "Write and run tests for a completed task"
+    }
+  ]
+}

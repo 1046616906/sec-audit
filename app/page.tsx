@@ -1,65 +1,113 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+import AgentTelemetry from '@/components/agent-telemetry';
+import ExecutionTimeline from '@/components/execution-timeline';
+import { RiskJudgmentFeed } from '@/components/risk-judgment-feed';
+import { DraggableLiveView } from '@/components/draggable-live-view';
+import { AuthModal } from '@/components/auth-modal';
+import { MenuSelectModal } from '@/components/menu-select-modal';
+import { useStore } from '@/lib/store';
 
 export default function Home() {
+  const setScanStatus = useStore((s) => s.setScanStatus);
+  const scanStatus = useStore((s) => s.scanStatus);
+  const setCurrentTaskId = useStore((s) => s.setCurrentTaskId);
+  const currentTaskId = useStore((s) => s.currentTaskId);
+  const authPageUrl = useStore((s) => s.authPageUrl);
+
+  const [targetUrl, setTargetUrl] = useState('');
+
+  async function handleStartScan() {
+    const res = await fetch('/api/scan/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetUrl: targetUrl.trim() }),
+    });
+    if (res.ok) {
+      const json = (await res.json()) as { taskId: string };
+      setCurrentTaskId(json.taskId);
+      setScanStatus('running');
+    } else {
+      const err = (await res.json()) as { error?: string };
+      alert(`Scan failed (${res.status}): ${err.error ?? 'Unknown error'}`);
+    }
+  }
+
+  async function handleStopScan() {
+    if (!currentTaskId) return;
+    await fetch('/api/scan/stop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: currentTaskId }),
+    });
+    setCurrentTaskId(null);
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-zinc-950 p-3 gap-3">
+      {/* Scan control bar */}
+      <div className="flex items-center gap-2 shrink-0">
+        <input
+          type="url"
+          value={targetUrl}
+          onChange={(e) => setTargetUrl(e.target.value)}
+          placeholder="https://target.example.com"
+          className="flex-1 rounded-lg border border-zinc-700 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 backdrop-blur-xl focus:border-cyan-500 focus:outline-none"
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+        {scanStatus !== 'running' && scanStatus !== 'paused' ? (
+          <button
+            onClick={() => void handleStartScan()}
+            disabled={!targetUrl}
+            className="rounded-lg border border-cyan-500/50 bg-cyan-500/10 px-4 py-2 text-sm font-medium text-cyan-400 backdrop-blur-xl transition-colors hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+            Start Scan
+          </button>
+        ) : (
+          <button
+            onClick={() => void handleStopScan()}
+            className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400 backdrop-blur-xl transition-colors hover:bg-red-500/20"
           >
-            Documentation
-          </a>
+            Stop Scan
+          </button>
+        )}
+      </div>
+
+      {/* Main 3-column layout */}
+      <div className="flex flex-1 overflow-hidden gap-3">
+        {/* Left column — 20% — Agent Telemetry */}
+        <div className="w-[20%] shrink-0">
+          <AgentTelemetry />
         </div>
-      </main>
+
+        {/* Center column — 50% — Execution Timeline */}
+        <div className="relative w-[50%] shrink-0">
+          {scanStatus === 'paused' && (
+            <div className="absolute inset-x-0 top-0 z-10 flex items-center gap-2 rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-2 backdrop-blur-xl">
+              <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+              <span className="text-sm font-mono text-red-400">
+                Scan paused — authentication required
+                {authPageUrl ? `: ${authPageUrl}` : ''}
+              </span>
+            </div>
+          )}
+          <ExecutionTimeline />
+        </div>
+
+        {/* Right column — 30% — Risk Judgment Feed */}
+        <div className="w-[30%] shrink-0 rounded-xl border border-zinc-800 bg-zinc-900/40 backdrop-blur-xl p-4">
+          <RiskJudgmentFeed />
+        </div>
+      </div>
+
+      {/* Floating PiP — DraggableLiveView */}
+      <DraggableLiveView />
+
+      {/* Auth modal — self-manages open state via scanStatus */}
+      <AuthModal />
+      {/* Menu select modal — appears when agent discovers navigation menus */}
+      <MenuSelectModal />
     </div>
   );
 }
+

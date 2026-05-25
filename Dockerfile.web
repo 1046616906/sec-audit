@@ -1,0 +1,41 @@
+FROM node:20-alpine AS base
+RUN npm install -g pnpm
+
+# ── deps ──────────────────────────────────────────────────────────────────────
+FROM base AS deps
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* .npmrc* ./
+RUN pnpm install --frozen-lockfile --shamefully-hoist
+
+# ── builder ───────────────────────────────────────────────────────────────────
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Generate Prisma client then build Next.js
+RUN pnpm prisma generate
+RUN pnpm build
+
+# Copy Prisma generated client into standalone bundle's node_modules
+RUN cp -r /app/node_modules/.prisma /app/.next/standalone/node_modules/.prisma || true
+RUN cp -r /app/node_modules/@prisma /app/.next/standalone/node_modules/@prisma || true
+
+# ── runner ────────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Next.js standalone bundle (already contains node_modules + Prisma client)
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+# Prisma schema (needed for db push at first boot)
+COPY --from=builder /app/prisma ./prisma
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

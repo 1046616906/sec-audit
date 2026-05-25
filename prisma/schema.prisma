@@ -1,0 +1,28 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model ScanTask {
+  id        String   @id
+  targetUrl String
+  status    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Vulnerability {
+  id         String   @id
+  taskId     String
+  url        String
+  field      String
+  riskLevel  String
+  reasoning  String
+  confidence Float
+  rawData    String
+  createdAt  DateTime @default(now())
+}

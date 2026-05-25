@@ -1,0 +1,447 @@
+{
+  "version": 1,
+  "feature": "Sec-Agent-Workspace — PII Scanner & Intelligent Audit System",
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Infrastructure & Global State",
+      "tasks": [
+        {
+          "id": "1.1",
+          "title": "Install and configure core dependencies",
+          "description": "Install all required packages: shadcn/ui (with its CLI init), framer-motion, zustand, prisma + @prisma/client, bullmq, ioredis, ai (Vercel AI SDK), playwright. Also add @types/ioredis and other missing dev types. Run `pnpm dlx shadcn@latest init` to scaffold shadcn config (components.json, updated tailwind config, cn utility). Update package.json scripts to add `check:types` (tsc --noEmit).",
+          "files": [
+            "package.json",
+            "pnpm-lock.yaml",
+            "components.json",
+            "tailwind.config.ts",
+            "tsconfig.json",
+            "lib/utils.ts"
+          ],
+          "depends_on": [],
+          "acceptance_criteria": [
+            "`pnpm install` completes without errors",
+            "`pnpm check:types` passes with zero errors on the bare scaffold",
+            "`components.json` exists and references the correct tailwind config",
+            "`lib/utils.ts` exports a `cn` helper using clsx + tailwind-merge"
+          ]
+        },
+        {
+          "id": "1.2",
+          "title": "Define Prisma schema and push to SQLite",
+          "description": "Create `prisma/schema.prisma` with the SQLite datasource and two models: ScanTask (id, targetUrl, status, createdAt, updatedAt) and Vulnerability (id, taskId, url, field, riskLevel, reasoning, confidence, rawData, createdAt). Run `pnpx prisma db push` to create the local SQLite file. Export a singleton Prisma client from `lib/db.ts`.",
+          "files": [
+            "prisma/schema.prisma",
+            "lib/db.ts"
+          ],
+          "depends_on": ["1.1"],
+          "acceptance_criteria": [
+            "`prisma/schema.prisma` contains both ScanTask and Vulnerability models with all fields from the PRD",
+            "`pnpx prisma db push` exits 0 and creates `prisma/dev.db`",
+            "`lib/db.ts` exports a `prisma` singleton that reuses the global instance in development",
+            "`pnpm check:types` still passes after adding db.ts"
+          ]
+        },
+        {
+          "id": "1.3",
+          "title": "Build Zustand store with all state fields and actions",
+          "description": "Create `lib/store.ts` as a Zustand store (client-safe, no Node imports). Define all state fields from the PRD: `logs: LogEntry[]`, `risks: RiskEntry[]`, `liveFrame: string`, `telemetry_status: TelemetryStatus`, `sitemapNodes: SitemapNode[]`, `scanStatus: ScanStatus`. Define all supporting TypeScript types in `lib/types.ts`. Include actions: `addLog`, `addRisk`, `setLiveFrame`, `setTelemetry`, `upsertSitemapNode`, `setScanStatus`, `reset`.",
+          "files": [
+            "lib/types.ts",
+            "lib/store.ts"
+          ],
+          "depends_on": ["1.1"],
+          "acceptance_criteria": [
+            "`lib/types.ts` exports LogEntry, RiskEntry, TelemetryStatus, SitemapNode, ScanStatus with no `any` types",
+            "`lib/store.ts` imports only from zustand and lib/types — zero Node.js native imports",
+            "`pnpm check:types` passes with zero errors",
+            "All six state fields and all seven actions are present and correctly typed"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "Geek-Aesthetic UI Skeleton",
+      "tasks": [
+        {
+          "id": "2.1",
+          "title": "Implement global dark layout and three-column shell",
+          "description": "Update `app/layout.tsx` to apply full-screen dark mode (bg-zinc-950, text-zinc-100), import the Geist Mono font for log areas, and wrap children in a global provider component (`components/providers.tsx`) that mounts the Zustand store. Update `app/globals.css` with base cyber-theme variables (glow color tokens for each risk level). Update `app/page.tsx` to render the three-column grid: left 20%, center 50%, right 30%, each as a placeholder panel with glassmorphism styling (`backdrop-blur-xl`, semi-transparent bg).",
+          "files": [
+            "app/layout.tsx",
+            "app/globals.css",
+            "app/page.tsx",
+            "components/providers.tsx"
+          ],
+          "depends_on": ["1.3"],
+          "acceptance_criteria": [
+            "Page renders three columns at the correct proportions (20/50/30) with no horizontal overflow",
+            "Background is zinc-950 dark; panels have backdrop-blur-xl glassmorphism",
+            "CSS custom properties for risk-level glow colors (--glow-critical, --glow-high, --glow-medium, --glow-low) are defined in globals.css",
+            "`pnpm check:types` and `pnpm lint` pass"
+          ]
+        },
+        {
+          "id": "2.2",
+          "title": "Build AgentTelemetry component (left column)",
+          "description": "Create `components/agent-telemetry.tsx` (client component). Render four capability indicators: AI DOM Parsing, Auto-Login Detection, Deep Intercepting, and a Sitemap tree placeholder. Each indicator has a status dot that pulses with a Framer Motion `animate` breathing loop when active. Read `telemetry_status` and `sitemapNodes` from the Zustand store. The sitemap tree should render SitemapNode items recursively with an explored checkmark. Use mock data to verify animations during development.",
+          "files": [
+            "components/agent-telemetry.tsx"
+          ],
+          "depends_on": ["2.1"],
+          "acceptance_criteria": [
+            "All four telemetry indicators render with correct labels",
+            "Active indicator dot animates with a Framer Motion breathing loop (scale or opacity pulse), not a CSS animation",
+            "Sitemap tree renders nested SitemapNode items recursively",
+            "Component imports nothing from Node.js (no playwright, bullmq, ioredis)",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "2.3",
+          "title": "Build ExecutionTimeline component (center column)",
+          "description": "Create `components/execution-timeline.tsx` (client component). Render `logs` from the Zustand store as a vertical timeline. Each LogEntry displays: timestamp, action tag badge, and message in monospace font. New entries animate in with Framer Motion `slide-up` (y: 20 to 0, opacity: 0 to 1). The container auto-scrolls to the latest entry using a `useEffect` + `ref`. Error-level logs render in red (text-red-400) without crashing. Use mock log data to verify scroll and animation.",
+          "files": [
+            "components/execution-timeline.tsx"
+          ],
+          "depends_on": ["2.1"],
+          "acceptance_criteria": [
+            "Log entries render with timestamp, tag badge, and monospace message",
+            "New entries animate in with Framer Motion slide-up (not CSS transition)",
+            "Container auto-scrolls to the bottom when new logs are added",
+            "Error-level entries render in red without throwing",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "2.4",
+          "title": "Build RiskJudgmentFeed component (right column)",
+          "description": "Create `components/risk-judgment-feed.tsx` (client component). Render `risks` from the Zustand store as a waterfall of cards. Each RiskEntry card shows: risk level badge, intercepted URL, AI confidence progress bar (shadcn/ui Progress), and AI reasoning text. Card border glows with the risk-level color (box-shadow using CSS custom properties). Cards animate in with Framer Motion. Use mock risk data to verify glow effects and layout.",
+          "files": [
+            "components/risk-judgment-feed.tsx"
+          ],
+          "depends_on": ["2.1"],
+          "acceptance_criteria": [
+            "Cards render all four fields: risk level, URL, confidence bar, reasoning",
+            "Border glow color matches risk level (critical=red, high=orange, medium=yellow, low=blue)",
+            "Confidence bar uses shadcn/ui Progress component",
+            "Cards animate in with Framer Motion",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "2.5",
+          "title": "Build DraggableLiveView PiP component",
+          "description": "Create `components/draggable-live-view.tsx` (client component). Render a floating picture-in-picture window anchored to the bottom-right corner. Use Framer Motion `drag` with `dragConstraints` bound to the viewport. Apply extreme glassmorphism (backdrop-blur-xl, bg-black/60). Add macOS-style red/yellow/green control buttons: red closes/hides, yellow minimizes (collapses to title bar), green expands. Display `liveFrame` from the Zustand store as a base64 `<img>`. Include inertia on drag release (`dragTransition` with bounceStiffness and bounceDamping).",
+          "files": [
+            "components/draggable-live-view.tsx"
+          ],
+          "depends_on": ["2.1"],
+          "acceptance_criteria": [
+            "Window is draggable anywhere within the viewport with inertia bounce on release",
+            "macOS red/yellow/green buttons are present; red hides the window, yellow collapses it, green expands it",
+            "Glassmorphism effect is visible (backdrop-blur-xl + semi-transparent dark background)",
+            "When `liveFrame` is a non-empty base64 string, an `<img>` renders it",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "2.6",
+          "title": "Wire all UI components into the page with mock data",
+          "description": "Update `app/page.tsx` to import and render all four components in their correct columns: AgentTelemetry (left), ExecutionTimeline (center), RiskJudgmentFeed (right), and DraggableLiveView (floating). Populate the Zustand store with mock data (a few log entries, one risk per level, a placeholder base64 frame, all telemetry active) inside a `useEffect` on mount so all animations and glow effects are visible without a live backend.",
+          "files": [
+            "app/page.tsx",
+            "lib/mock-data.ts"
+          ],
+          "depends_on": ["2.2", "2.3", "2.4", "2.5"],
+          "acceptance_criteria": [
+            "All four components render in the correct layout positions",
+            "Mock logs appear in the timeline with slide-up animation",
+            "Mock risk cards appear with correct glow colors",
+            "DraggableLiveView is visible and draggable",
+            "AgentTelemetry shows active breathing indicators",
+            "`pnpm dev` starts without errors; `pnpm check:types` and `pnpm lint` pass"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Worker Queue & Communication Pipeline",
+      "tasks": [
+        {
+          "id": "3.1",
+          "title": "Configure BullMQ queue and Redis connection",
+          "description": "Create `lib/queue.ts` (server-only) that exports a BullMQ `Queue` named `scan-queue` and an `ioredis` connection. Create `lib/redis.ts` that exports a shared ioredis client used for both BullMQ and Redis Pub/Sub. Add a `REDIS_URL` environment variable (default `redis://localhost:6379`) read via `process.env`. These files must never be imported by client components.",
+          "files": [
+            "lib/queue.ts",
+            "lib/redis.ts",
+            ".env.local"
+          ],
+          "depends_on": ["1.2"],
+          "acceptance_criteria": [
+            "`lib/queue.ts` exports a BullMQ Queue and uses the shared ioredis connection from lib/redis.ts",
+            "`lib/redis.ts` reads REDIS_URL from env with a localhost fallback",
+            "Neither file contains `'use client'`",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "3.2",
+          "title": "Implement SSE API route /api/events",
+          "description": "Create `app/api/events/route.ts` as a Next.js Route Handler that returns a streaming `Response` with `Content-Type: text/event-stream`. Subscribe to a Redis Pub/Sub channel (`scan-events`) using a dedicated ioredis subscriber client. For each message received, parse the JSON payload and forward it as an SSE event (`data: ...\\n\\n`). Handle client disconnect by unsubscribing and closing the Redis connection. Support all seven SSE event types from the PRD (LOG, RISK, FRAME, AUTH_REQUIRED, TELEMETRY, SITEMAP, SCAN_DONE).",
+          "files": [
+            "app/api/events/route.ts"
+          ],
+          "depends_on": ["3.1"],
+          "acceptance_criteria": [
+            "GET /api/events returns Content-Type: text/event-stream",
+            "Messages published to the `scan-events` Redis channel appear as SSE events within 500ms",
+            "Client disconnect triggers cleanup (unsubscribe + Redis connection close) without unhandled promise rejections",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "3.3",
+          "title": "Implement POST /api/scan/start and POST /api/scan/stop",
+          "description": "Create `app/api/scan/start/route.ts`: validate the `targetUrl` body field, create a ScanTask record in Prisma with status `running`, enqueue a BullMQ job with the taskId and targetUrl, return `{ taskId }`. Create `app/api/scan/stop/route.ts`: accept `{ taskId }`, update the ScanTask status to `failed` in Prisma, drain/remove the matching BullMQ job, publish a SCAN_DONE event to Redis. Both routes must wrap all logic in try-catch and return appropriate HTTP error responses.",
+          "files": [
+            "app/api/scan/start/route.ts",
+            "app/api/scan/stop/route.ts"
+          ],
+          "depends_on": ["3.1", "1.2"],
+          "acceptance_criteria": [
+            "POST /api/scan/start with a valid URL returns 200 with `{ taskId }` and creates a DB record",
+            "POST /api/scan/start with a missing URL returns 400",
+            "POST /api/scan/stop updates the DB record status to `failed`",
+            "Both routes return 500 with an error message on unexpected failures",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "3.4",
+          "title": "Build the standalone BullMQ Worker process",
+          "description": "Create `worker/index.ts` as a standalone Node.js script (not a Next.js route). It registers a BullMQ Worker on the `scan-queue`. The job handler receives `{ taskId, targetUrl }`, launches a Playwright Chromium browser, navigates to the target URL, takes a screenshot, encodes it as base64, and publishes a FRAME event to Redis. Also publish a LOG event for each major step. Wrap all Playwright calls in try-catch; on error publish a LOG event with level `error` and update the ScanTask status to `failed` in Prisma. Add a `worker` script to package.json: `ts-node worker/index.ts`.",
+          "files": [
+            "worker/index.ts",
+            "package.json"
+          ],
+          "depends_on": ["3.1", "1.2"],
+          "acceptance_criteria": [
+            "`worker/index.ts` starts without import errors when run with `pnpm worker`",
+            "Processing a job publishes at least one LOG event and one FRAME event to Redis",
+            "A Playwright error is caught, logged as an error-level LOG event, and does not crash the worker process",
+            "The ScanTask DB record is updated to `completed` on success and `failed` on error",
+            "`pnpm check:types` passes for worker/index.ts"
+          ]
+        },
+        {
+          "id": "3.5",
+          "title": "Connect SSE stream to Zustand store in the frontend",
+          "description": "Create `hooks/use-sse.ts` (client hook) that opens an `EventSource` to `/api/events` on mount and closes it on unmount. For each incoming SSE message, parse the JSON and dispatch to the correct Zustand action based on event type: LOG to addLog, RISK to addRisk, FRAME to setLiveFrame, TELEMETRY to setTelemetry, SITEMAP to upsertSitemapNode, SCAN_DONE to setScanStatus('done'). Mount this hook in `components/providers.tsx`. Add a URL input form to `app/page.tsx` that calls POST /api/scan/start and sets scanStatus to 'running' in the store.",
+          "files": [
+            "hooks/use-sse.ts",
+            "components/providers.tsx",
+            "app/page.tsx"
+          ],
+          "depends_on": ["3.2", "3.3", "1.3"],
+          "acceptance_criteria": [
+            "Opening the app establishes an EventSource connection to /api/events (visible in browser DevTools Network tab)",
+            "A LOG event published to Redis appears in the ExecutionTimeline within 1 second",
+            "A FRAME event updates the DraggableLiveView image",
+            "The URL input form submits to /api/scan/start and updates scanStatus to 'running'",
+            "`pnpm check:types` passes"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "Agent Exploration & Human-in-the-Loop Auth",
+      "tasks": [
+        {
+          "id": "4.1",
+          "title": "Integrate Vercel AI SDK with DOM-reading agent tools",
+          "description": "In `worker/agent.ts`, implement the AI agent loop using Vercel AI SDK `generateText` with `tools`. Define two tools: `read_dom` (takes no args, returns the current page's simplified DOM as a string via `page.evaluate`) and `explore_menu` (takes a CSS selector, clicks it, waits for navigation/expansion, returns updated DOM). The agent loop runs until the AI returns no more tool calls or a max-step limit is reached. Publish a TELEMETRY event with `{ capability: 'AI DOM Parsing', active: true }` when the loop starts.",
+          "files": [
+            "worker/agent.ts"
+          ],
+          "depends_on": ["3.4"],
+          "acceptance_criteria": [
+            "`worker/agent.ts` exports a `runAgent(page, taskId, publishEvent)` function",
+            "The agent calls `read_dom` at least once per page before deciding next action",
+            "The `explore_menu` tool clicks the selector and returns the updated DOM",
+            "TELEMETRY events are published for AI DOM Parsing capability state changes",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "4.2",
+          "title": "Implement human-in-the-loop authentication flow",
+          "description": "In `worker/agent.ts`, add login detection: after `read_dom`, check if the DOM contains a password input field. If detected: publish AUTH_REQUIRED event with the current page URL, pause the BullMQ job (or block on a Redis key), and publish TELEMETRY `{ capability: 'Auto-Login Detection', active: true }`. Create `app/api/worker/resume/route.ts` (POST): accept `{ taskId, username, password }`, store credentials in a Redis key (`auth:{taskId}`), and signal the worker to resume. In the worker, poll for the Redis key, then call `page.fill()` for username and password fields and submit the form.",
+          "files": [
+            "worker/agent.ts",
+            "app/api/worker/resume/route.ts"
+          ],
+          "depends_on": ["4.1", "3.1"],
+          "acceptance_criteria": [
+            "When a page with a password input is encountered, an AUTH_REQUIRED SSE event is emitted",
+            "POST /api/worker/resume stores credentials in Redis and returns 200",
+            "After resume, the worker fills the login form and submits it without crashing",
+            "TELEMETRY Auto-Login Detection indicator activates during the auth pause",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "4.3",
+          "title": "Build AuthModal component and wire AUTH_REQUIRED event",
+          "description": "Create `components/auth-modal.tsx` (client component) using shadcn/ui Dialog. The modal opens when `scanStatus === 'paused'` (set by the AUTH_REQUIRED SSE handler in use-sse.ts). It shows the page URL that requires login, username and password inputs, and a Submit button. On submit, POST to `/api/worker/resume` with the credentials and taskId, then close the modal and set scanStatus back to 'running'. The center column (ExecutionTimeline) should display a red banner when auth is required. Update `use-sse.ts` to handle AUTH_REQUIRED by setting scanStatus to 'paused'.",
+          "files": [
+            "components/auth-modal.tsx",
+            "hooks/use-sse.ts",
+            "app/page.tsx"
+          ],
+          "depends_on": ["4.2", "3.5"],
+          "acceptance_criteria": [
+            "AuthModal renders when scanStatus is 'paused'",
+            "Modal displays the pageUrl from the AUTH_REQUIRED event",
+            "Submitting the form calls POST /api/worker/resume and closes the modal",
+            "A red banner appears in the ExecutionTimeline area when auth is required",
+            "`pnpm check:types` passes"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 5,
+      "name": "Dual-Engine Interception & Vulnerability Judgment",
+      "tasks": [
+        {
+          "id": "5.1",
+          "title": "Implement Tier 1 Regex network traffic interceptor",
+          "description": "In `worker/interceptor.ts`, implement the Tier 1 interceptor. Register `page.on('response', handler)` in the worker. For each response with Content-Type containing `application/json`, read the response body and run a set of regex patterns against it to detect PII signals: email addresses, phone numbers, ID card numbers, credit card patterns, tokens/passwords (fields named `password`, `token`, `secret`, `key`). If any pattern matches, extract the matching JSON snippet and emit it to a callback for Tier 2 processing. Publish a TELEMETRY event `{ capability: 'Deep Intercepting', active: true }` when the interceptor is registered.",
+          "files": [
+            "worker/interceptor.ts"
+          ],
+          "depends_on": ["3.4"],
+          "acceptance_criteria": [
+            "`worker/interceptor.ts` exports a `registerInterceptor(page, onMatch, publishEvent)` function",
+            "JSON responses containing email addresses are detected by the regex tier",
+            "JSON responses containing a field named `password` are detected",
+            "Non-JSON responses are silently skipped",
+            "TELEMETRY Deep Intercepting event is published on registration",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "5.2",
+          "title": "Implement Tier 2 AI semantic vulnerability judgment",
+          "description": "In `worker/analyzer.ts`, implement the Tier 2 AI judgment. The `analyzeSnippet(snippet: string, url: string, taskId: string, publishEvent)` function sends the JSON snippet and URL to the AI model via Vercel AI SDK `generateText` with a structured prompt asking it to: determine if real PII is present, identify the field name, assign a risk level (critical/high/medium/low), provide reasoning, and give a confidence score (0-1). Parse the AI response into a `RiskEntry`. Persist the finding to Prisma as a Vulnerability record. Publish a RISK SSE event with the structured data.",
+          "files": [
+            "worker/analyzer.ts"
+          ],
+          "depends_on": ["5.1", "3.1", "1.2"],
+          "acceptance_criteria": [
+            "`worker/analyzer.ts` exports `analyzeSnippet` with the correct signature",
+            "The function returns a structured RiskEntry with all required fields (no `any` types)",
+            "A Vulnerability record is created in the Prisma DB for each confirmed finding",
+            "A RISK SSE event is published with riskLevel, url, field, reasoning, and confidence",
+            "AI errors are caught and logged as error-level LOG events without crashing",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "5.3",
+          "title": "Wire interceptor and analyzer into the worker and finalize scan flow",
+          "description": "Update `worker/index.ts` to call `registerInterceptor` before navigation and pass `analyzeSnippet` as the Tier 1 match callback. After the agent loop completes, update the ScanTask status to `completed` in Prisma and publish a SCAN_DONE event with a summary (total pages explored, total vulnerabilities found). Also implement `GET /api/scan/results` route that returns all Vulnerability records for a given taskId from Prisma.",
+          "files": [
+            "worker/index.ts",
+            "app/api/scan/results/route.ts"
+          ],
+          "depends_on": ["5.1", "5.2", "4.1"],
+          "acceptance_criteria": [
+            "A full scan run (start to explore to intercept to analyze to done) completes without unhandled errors",
+            "SCAN_DONE event includes a summary with page count and vulnerability count",
+            "GET /api/scan/results?taskId=X returns the persisted Vulnerability records as JSON",
+            "ScanTask status is `completed` in the DB after a successful scan",
+            "`pnpm check:types` and `pnpm lint` pass on all modified files"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 6,
+      "name": "Captcha Handling",
+      "tasks": [
+        {
+          "id": "6.1",
+          "title": "Create captcha detection and handling module",
+          "description": "Create `worker/captcha.ts` exporting `detectAndHandleCaptcha(page, taskId, publishEvent)`. Detection logic: scan the DOM for known captcha signals — `img[src*='captcha']`, `canvas`, `.slide-verify`, `.el-slider`, `input[placeholder*='验证码']`, `input[placeholder*='code']`, etc. Classify type: 'image' (static img/canvas captcha), 'slider' (drag-to-verify), 'sms' (phone input + code field), 'email' (email input + code field), 'unknown' (code input present but unclassified). Handling per type: (1) image — screenshot the captcha element via `page.locator(selector).screenshot()`, send to AI Vision via OpenAI-compatible API with prompt 'What text is shown in this captcha image? Reply with only the characters.', fill the input, submit, check for error indicators, retry up to 3 times; (2) slider — use `page.mouse` to simulate a human drag: start at handle, move right in small increments with random ±2px Y jitter and non-uniform speed (Math.random delays), release at track end; (3) sms/email/unknown — publish AUTH_REQUIRED event with captchaType and captchaImageBase64 if available, then poll Redis key `captcha:{taskId}` for the user-submitted code (same pattern as auth credential polling), fill the code input and submit. Returns `{ handled: boolean; captchaType: CaptchaType }`.",
+          "files": [
+            "worker/captcha.ts"
+          ],
+          "depends_on": ["4.1"],
+          "acceptance_criteria": [
+            "`worker/captcha.ts` exports `detectAndHandleCaptcha` with signature `(page: Page, taskId: string, publishEvent: (e: object) => Promise<void>) => Promise<{ handled: boolean; captchaType: CaptchaType }>`",
+            "Image captcha path: locates captcha img/canvas, calls AI Vision API, fills input — verified by unit-level inspection of the function",
+            "Slider path: uses `page.mouse.move` with at least 10 incremental steps and random Y jitter — no single large jump",
+            "SMS/email path: publishes AUTH_REQUIRED with `captchaType` and optional `captchaImageBase64`, polls `captcha:{taskId}` Redis key",
+            "`pnpm check:types` passes with no `any` types"
+          ]
+        },
+        {
+          "id": "6.2",
+          "title": "Extend AUTH_REQUIRED event type and resume API",
+          "description": "In `lib/types.ts`, add a `CaptchaType` union type: `'image' | 'slider' | 'sms' | 'email' | 'unknown'`. Add an `AuthRequiredEvent` type: `{ pageUrl: string; captchaType: CaptchaType; captchaImageBase64?: string }`. Update `app/api/worker/resume/route.ts` to accept an optional `captchaCode?: string` field in the request body alongside `username` and `password`. If `captchaCode` is present, store it in Redis key `captcha:{taskId}` (in addition to or instead of the auth key, depending on which fields are non-empty). Update `hooks/use-sse.ts` to extract `captchaType` and `captchaImageBase64` from AUTH_REQUIRED events and store them via two new store actions.",
+          "files": [
+            "lib/types.ts",
+            "app/api/worker/resume/route.ts",
+            "lib/store.ts",
+            "hooks/use-sse.ts"
+          ],
+          "depends_on": ["6.1"],
+          "acceptance_criteria": [
+            "`CaptchaType` and `AuthRequiredEvent` are exported from `lib/types.ts` with no `any`",
+            "POST /api/worker/resume with `{ taskId, captchaCode: '1234' }` stores `captcha:{taskId}` = '1234' in Redis and returns 200",
+            "POST /api/worker/resume still handles `{ taskId, username, password }` correctly (backwards compatible)",
+            "`lib/store.ts` has `captchaType: CaptchaType | null` and `captchaImageBase64: string | null` state fields with setter actions",
+            "`pnpm check:types` passes"
+          ]
+        },
+        {
+          "id": "6.3",
+          "title": "Extend AuthModal with captcha-aware UI",
+          "description": "Update `components/auth-modal.tsx` to render different UI based on `captchaType` from the Zustand store. Layout: the modal always shows the `pageUrl`. Then conditionally: (1) `captchaType === 'image'` — show the captcha image (`<img src={captchaImageBase64} />`) and a single code input labeled 'Captcha Text'; also show username/password fields since image captchas usually accompany a login form; (2) `captchaType === 'sms'` — show message 'A verification code was sent to your phone. Enter it below.' + code input only; (3) `captchaType === 'email'` — same but 'check your email'; (4) `captchaType === 'slider'` — show 'Auto-handling slider captcha...' spinner with a Framer Motion animated indicator, no input needed, modal auto-closes when scanStatus returns to 'running'; (5) `captchaType === 'unknown'` or null — show username/password + optional code input (current behavior). On submit, POST to `/api/worker/resume` with whichever fields are filled (username, password, captchaCode).",
+          "files": [
+            "components/auth-modal.tsx"
+          ],
+          "depends_on": ["6.2"],
+          "acceptance_criteria": [
+            "Modal renders captcha image when `captchaType === 'image'` and `captchaImageBase64` is set",
+            "Modal shows SMS-specific message and only a code input when `captchaType === 'sms'`",
+            "Modal shows animated spinner (Framer Motion) and no inputs when `captchaType === 'slider'`",
+            "Submit POSTs `captchaCode` to `/api/worker/resume` when a code input is filled",
+            "`pnpm check:types` passes, no `any` types"
+          ]
+        },
+        {
+          "id": "6.4",
+          "title": "Wire captcha module into the agent flow",
+          "description": "Update `worker/agent.ts`: in `handleAuthIfNeeded`, call `detectAndHandleCaptcha(page, taskId, publishEvent)` BEFORE checking for password inputs. If `detectAndHandleCaptcha` returns `{ handled: true }` and the captcha type was 'slider' (auto-handled), wait 2s then re-check the page — if it navigated away from the login page, return early (no further auth needed). If captcha was sms/email/unknown (human handled), after the user submits the code, re-run the password fill logic to complete login. If `detectAndHandleCaptcha` returns `{ handled: false }`, fall through to the existing password-fill logic unchanged. No changes to `worker/index.ts` needed since `runAgent` already calls `handleAuthIfNeeded` internally.",
+          "files": [
+            "worker/agent.ts"
+          ],
+          "depends_on": ["6.1", "6.2"],
+          "acceptance_criteria": [
+            "`detectAndHandleCaptcha` is called at the top of `handleAuthIfNeeded` before password detection",
+            "When captcha type is 'slider' and handled successfully, the function returns without triggering AUTH_REQUIRED",
+            "When captcha type is 'sms' and user submits code, the agent proceeds to fill password fields afterwards",
+            "If no captcha is detected, existing password-fill behaviour is unchanged",
+            "`pnpm check:types` passes"
+          ]
+        }
+      ]
+    }
+  ]
+}
