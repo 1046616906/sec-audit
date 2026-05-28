@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim AS base
+FROM node:20-alpine AS base
 RUN npm install -g pnpm
 
 # ── deps ──────────────────────────────────────────────────────────────────────
@@ -8,25 +8,31 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml* .npmrc* ./
 RUN pnpm install --frozen-lockfile --shamefully-hoist
 
 # ── runner ────────────────────────────────────────────────────────────────────
-FROM base AS runner
+FROM node:20-alpine AS runner
 WORKDIR /app
 
-# Playwright system dependencies (Chromium)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-    libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
-    libgbm1 libasound2 libpango-1.0-0 libcairo2 libxshmfence1 \
-    fonts-liberation wget ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+# Playwright Chromium dependencies for Alpine
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    && rm -rf /var/cache/apk/*
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Generate Prisma client (prisma is in dependencies, use local binary)
+# Generate Prisma client
 RUN pnpm prisma generate
 
-# Install Playwright Chromium browser
-RUN npx playwright install chromium
+# Tell Playwright to use system Chromium
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+
+# Chromium sandbox requires this in Docker
+ENV PLAYWRIGHT_CHROMIUM_USE_HEADLESS_NEW=1
 
 ENV NODE_ENV=production
 
