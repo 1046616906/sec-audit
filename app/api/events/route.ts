@@ -1,6 +1,11 @@
 import { createRedisClient } from "@/lib/redis";
 
 export async function GET(request: Request): Promise<Response> {
+  // Optional ?taskId=... → only forward events for that task. Omit to receive
+  // the global firehose (used by the task list / multi-task overview).
+  const url = new URL(request.url);
+  const filterTaskId = url.searchParams.get("taskId");
+
   const subscriber = createRedisClient();
 
   const stream = new ReadableStream({
@@ -13,6 +18,17 @@ export async function GET(request: Request): Promise<Response> {
       });
 
       subscriber.on("message", (_channel: string, message: string) => {
+        if (filterTaskId !== null) {
+          // Cheap filter — peek at the taskId without parsing fully.
+          // Worker tags every event with { taskId, ... }. If the field is
+          // missing (old event shape) or doesn't match, drop it.
+          try {
+            const parsed = JSON.parse(message) as { taskId?: string };
+            if (parsed.taskId !== filterTaskId) return;
+          } catch {
+            return;
+          }
+        }
         controller.enqueue(`data: ${message}\n\n`);
       });
 

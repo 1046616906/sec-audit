@@ -29,7 +29,7 @@ export type SitemapNode = {
   children: SitemapNode[];
 };
 
-export type ScanStatus = 'idle' | 'running' | 'paused' | 'menu_select' | 'done';
+export type ScanStatus = 'idle' | 'running' | 'paused' | 'menu_select' | 'done' | 'cancelled';
 
 /** A discovered menu item the user can choose to scan */
 export type MenuItem = {

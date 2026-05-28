@@ -44,14 +44,15 @@ const TOOLS = [
     type: "function",
     function: {
       name: "click_element",
-      description: "Click a CSS selector and wait for the page to update. Use this to expand collapsed menus or navigate.",
+      description: "Click an element on the page. STRONGLY PREFER passing 'text' (the visible label) — text-based location is far more robust than CSS selectors against SPA re-renders. Use 'selector' only to disambiguate when multiple elements share the same text, or for elements without visible text.",
       parameters: {
         type: "object",
         properties: {
-          selector: { type: "string", description: "CSS selector to click" },
+          text: { type: "string", description: "The visible text/label of the element to click. ALWAYS pass this when the element has visible text." },
+          selector: { type: "string", description: "Optional CSS selector — only as a disambiguator when multiple elements share the same text, or as fallback for icon-only elements. NEVER fabricate selectors with nth-child or positional indexes." },
           description: { type: "string", description: "What this element is (e.g. 'expand sidebar menu')" },
         },
-        required: ["selector", "description"],
+        required: ["description"],
       },
     },
   },
@@ -70,11 +71,11 @@ const TOOLS = [
               type: "object",
               properties: {
                 id: { type: "string", description: "Unique identifier (use slugified label)" },
-                label: { type: "string", description: "Display name of the menu item" },
-                selector: { type: "string", description: "CSS selector to click this menu item" },
+                label: { type: "string", description: "Display name of the menu item — this is the PRIMARY locator, must match the visible text exactly" },
+                selector: { type: "string", description: "Optional CSS selector — only as a tie-breaker if multiple menu items share the same label. NEVER use nth-child or positional indexes." },
                 description: { type: "string", description: "Brief description of what this module does" },
               },
-              required: ["id", "label", "selector", "description"],
+              required: ["id", "label", "description"],
             },
           },
         },
@@ -97,45 +98,83 @@ function makeLogEvent(level: LogEntry["level"], message: string): object {
   };
 }
 
-async function callApi(messages: Message[]): Promise<AssistantMessage> {
+async function callApi(messages: Message[], signal?: AbortSignal): Promise<AssistantMessage> {
   const { url, key, model } = getApiConfig();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        tools: TOOLS,
-        max_tokens: 2048,
-      }),
-    });
 
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`API error ${res.status}: ${body}`);
+  // Retry transient network/timeout failures. User cancellation propagates
+  // through `signal` and bypasses the retry loop immediately.
+  const MAX_ATTEMPTS = 3;
+  const BACKOFFS_MS = [1000, 2000, 4000];
+  let lastErr: unknown = null;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    if (signal?.aborted) throw new Error("cancelled");
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener("abort", onExternalAbort, { once: true });
     }
 
-    const data = (await res.json()) as ChatResponse;
-    return data.choices[0].message;
-  } finally {
-    clearTimeout(timeout);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          tools: TOOLS,
+          max_tokens: 2048,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        // 4xx (except 429) won't get better with retries — fail fast.
+        const isRetryable = res.status === 429 || res.status >= 500;
+        const err = new Error(`API error ${res.status}: ${body}`);
+        if (!isRetryable) throw err;
+        lastErr = err;
+      } else {
+        const data = (await res.json()) as ChatResponse;
+        return data.choices[0].message;
+      }
+    } catch (err: unknown) {
+      // External cancellation — surface immediately, don't retry.
+      if (signal?.aborted) throw new Error("cancelled");
+      lastErr = err;
+    } finally {
+      clearTimeout(timeout);
+      if (signal) signal.removeEventListener("abort", onExternalAbort);
+    }
+
+    // Backoff before next attempt (skip after the final failure).
+    if (attempt < MAX_ATTEMPTS - 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, BACKOFFS_MS[attempt]));
+    }
   }
+
+  throw lastErr instanceof Error ? lastErr : new Error("LLM request failed after retries");
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new Error("cancelled");
 }
 
 /** Wait for user to select menu items via Redis key. Returns selected item IDs (empty = skip). */
-async function waitForMenuSelection(taskId: string): Promise<string[]> {
+async function waitForMenuSelection(taskId: string, signal?: AbortSignal): Promise<string[]> {
   const redisClient = createRedisClient();
   const key = `menu-select:${taskId}`;
   try {
     // Poll up to 10 minutes (300 x 2s)
     for (let i = 0; i < 300; i++) {
+      throwIfAborted(signal);
       const raw = await redisClient.get(key);
       if (raw !== null) {
         await redisClient.del(key);
@@ -274,25 +313,53 @@ async function executeTool(
   }
 
   if (name === "click_element") {
-    let parsed: { selector?: string; description?: string };
+    let parsed: { text?: string; selector?: string; description?: string };
     try {
-      parsed = JSON.parse(args) as { selector?: string; description?: string };
+      parsed = JSON.parse(args) as { text?: string; selector?: string; description?: string };
     } catch {
       return { result: "Error: invalid arguments" };
     }
-    const selector = parsed.selector ?? "";
+    const text = parsed.text?.trim() ?? "";
+    const selector = parsed.selector?.trim() ?? "";
+    const desc = parsed.description ?? text ?? selector;
+
+    if (!text && !selector) {
+      return { result: "Error: must provide at least 'text' or 'selector'" };
+    }
+
     try {
-      await page.click(selector, { timeout: 5000 });
-      // SPA: wait for network idle after click, fallback to 3s timeout
+      // Locate the element with text-first strategy:
+      // 1. text only           → getByText (exact-ish, then loose)
+      // 2. text + selector     → locator(selector).filter({ hasText: text }) for disambiguation
+      // 3. selector only       → locator(selector) — fallback for icon-only elements
+      let locator;
+      if (text && selector) {
+        locator = page.locator(selector).filter({ hasText: text }).first();
+      } else if (text) {
+        // Try exact match first; if zero matches, fall back to substring match
+        const exact = page.getByText(text, { exact: true }).first();
+        if ((await exact.count()) > 0) {
+          locator = exact;
+        } else {
+          locator = page.getByText(text, { exact: false }).first();
+        }
+      } else {
+        locator = page.locator(selector).first();
+      }
+
+      await locator.click({ timeout: 5000 });
+
+      // SPA: wait for network idle after click, fallback to 2s timeout
       try {
         await page.waitForLoadState("networkidle", { timeout: 5000 });
       } catch {
         await page.waitForTimeout(2000);
       }
       const dom = await page.evaluate(() => document.body.innerText.slice(0, 4000));
-      return { result: `Clicked "${parsed.description ?? selector}". Updated DOM:\n${dom}` };
+      return { result: `Clicked "${desc}". Updated DOM:\n${dom}` };
     } catch {
-      return { result: `Error: selector "${selector}" not found or not clickable` };
+      const what = text ? `text "${text}"` : `selector "${selector}"`;
+      return { result: `Error: ${what} not found or not clickable` };
     }
   }
 
@@ -314,6 +381,7 @@ export async function runAgent(
   page: Page,
   taskId: string,
   publishEvent: (event: object) => Promise<void>,
+  signal?: AbortSignal,
 ): Promise<void> {
   await publishEvent({ type: "TELEMETRY", data: { capability: "aiDomParsing", active: true } });
 
@@ -333,7 +401,9 @@ STRICT INSTRUCTIONS:
    - Do NOT expand collapsed sub-menus.
    - Do NOT recurse into children.
    - If a menu item has children (hasChildren=true), report the PARENT item itself — the user will decide whether to scan it.
-   - Use the selector of the parent item, not its children.
+   - The "label" field MUST match the visible menu text exactly — it will be used for text-based location.
+   - Only include "selector" if multiple menus share the same label and you need to disambiguate.
+   - NEVER use nth-child, nth-of-type, or any positional CSS indexes — they break on SPA re-renders.
 4. If the page has no navigation at all (e.g. a plain login form), stop without calling report_menu_items.
 
 You MUST use tools. Do not respond with plain text.`,
@@ -350,8 +420,9 @@ You MUST use tools. Do not respond with plain text.`,
     let stepCount = 0;
 
     while (menuItems === null) {
+      throwIfAborted(signal);
       stepCount++;
-      const assistant = await callApi(messages);
+      const assistant = await callApi(messages, signal);
       messages.push(assistant);
 
       if (!assistant.tool_calls || assistant.tool_calls.length === 0) {
@@ -396,7 +467,7 @@ You MUST use tools. Do not respond with plain text.`,
     }
 
     // Phase 2: wait for user to select modules
-    const selectedIds = await waitForMenuSelection(taskId);
+    const selectedIds = await waitForMenuSelection(taskId, signal);
 
     if (selectedIds.length === 0) {
       await publishEvent(makeLogEvent("info", "User skipped module selection. Scan complete."));
@@ -427,6 +498,7 @@ You MUST use tools. Do not respond with plain text.`,
     const initialUrl = page.url();
 
     for (const item of deduped) {
+      throwIfAborted(signal);
       await publishEvent(makeLogEvent("info", `▶ Entering module: ${item.label}`));
 
       // Push sitemap node for this module
@@ -457,12 +529,23 @@ You MUST use tools. Do not respond with plain text.`,
 
         let clicked = false;
         try {
-          await page.click(item.selector, { timeout: 5000 });
-          clicked = true;
+          // Text-first: locate menu by visible label, fall back to selector only if needed
+          const textLocator = page.getByText(item.label, { exact: true }).first();
+          if ((await textLocator.count()) > 0) {
+            await textLocator.click({ timeout: 5000 });
+            clicked = true;
+          } else if (item.selector) {
+            await page.click(item.selector, { timeout: 5000 });
+            clicked = true;
+          } else {
+            // Loose text match as last resort
+            await page.getByText(item.label, { exact: false }).first().click({ timeout: 5000 });
+            clicked = true;
+          }
         } catch {
-          // Selector not found after reset — SPA menu is collapsed.
+          // Selector / text not found after reset — SPA menu is collapsed.
           // Try expanding parent menus by clicking any collapsed sub-menu toggle.
-          await publishEvent(makeLogEvent("warn", `[${item.label}] Selector not found after reset, attempting parent menu expansion...`));
+          await publishEvent(makeLogEvent("warn", `[${item.label}] Not found after reset, attempting parent menu expansion...`));
           try {
             // Click the first collapsed sub-menu parent visible in the sidebar
             await page.click(
@@ -470,7 +553,15 @@ You MUST use tools. Do not respond with plain text.`,
               { timeout: 3000 },
             );
             await page.waitForTimeout(1000);
-            await page.click(item.selector, { timeout: 5000 });
+            // Retry text-first after expansion
+            const retry = page.getByText(item.label, { exact: true }).first();
+            if ((await retry.count()) > 0) {
+              await retry.click({ timeout: 5000 });
+            } else if (item.selector) {
+              await page.click(item.selector, { timeout: 5000 });
+            } else {
+              await page.getByText(item.label, { exact: false }).first().click({ timeout: 5000 });
+            }
             clicked = true;
           } catch {
             await publishEvent(makeLogEvent("warn", `[${item.label}] Could not navigate to module — skipping.`));
@@ -511,17 +602,22 @@ You MUST use tools. Do not respond with plain text.`,
 read_dom returns two sections:
 - PAGE TEXT: visible text content
 - NAV STRUCTURE: JSON array of nav elements with fields:
-  - "text": display label
-  - "href": if non-empty, this is a NAVIGABLE LINK — use click_element to visit it
-  - "hasChildren": if true, this is an EXPANDABLE PARENT MENU — use click_element to expand it first, then call read_dom again to see the children
+  - "text": display label — THIS IS YOUR PRIMARY LOCATOR. Pass it as the "text" arg to click_element.
+  - "href": if non-empty, this is a NAVIGABLE LINK — click it via its text
+  - "hasChildren": if true, this is an EXPANDABLE PARENT MENU — click it to expand, then read_dom again
   - "isExpanded": "true" means already expanded, "false" or null means collapsed
-  - "selector": CSS selector to use with click_element
+  - "selector": only use this as a tie-breaker when multiple items share the same text
+
+CLICK RULES (critical):
+- ALWAYS pass the "text" argument to click_element — it is far more reliable than CSS selectors against SPA re-renders.
+- Only pass "selector" in addition to "text" when multiple elements share the same visible text.
+- NEVER fabricate selectors with nth-child, nth-of-type, or positional indexes — they will fail.
 
 Your job:
 1. Call read_dom to see the current state.
 2. For each item in NAV STRUCTURE:
-   - If hasChildren=true and isExpanded≠"true": call click_element to expand it, then read_dom again
-   - If href is non-empty: call click_element to navigate to it, then read_dom to capture the page
+   - If hasChildren=true and isExpanded≠"true": click_element with its text to expand it, then read_dom again
+   - If href is non-empty: click_element with its text to navigate to it, then read_dom to capture the page
 3. Continue until all sub-pages and sub-sections are explored.
 4. When done, stop calling tools and give a brief security summary.`,
           },
@@ -531,8 +627,9 @@ Your job:
         const maxModuleSteps = 15;
 
         while (moduleStep < maxModuleSteps) {
+          throwIfAborted(signal);
           moduleStep++;
-          const assistant = await callApi(moduleMessages);
+          const assistant = await callApi(moduleMessages, signal);
           moduleMessages.push(assistant);
 
           if (!assistant.tool_calls || assistant.tool_calls.length === 0) {

@@ -3,17 +3,20 @@ import { db } from "@/lib/db";
 
 export async function GET(): Promise<NextResponse> {
   try {
-    const task = await db.scanTask.findFirst({
-      where: { status: { in: ["running", "paused"] } },
+    const tasks = await db.scanTask.findMany({
+      where: { status: { in: ["running", "paused", "menu_select"] } },
       orderBy: { createdAt: "desc" },
     });
 
-    if (!task) {
-      return NextResponse.json({ task: null }, { status: 200 });
-    }
+    const list = tasks.map((t) => ({
+      id: t.id,
+      targetUrl: t.targetUrl,
+      status: t.status,
+    }));
 
+    // Backward-compat: keep `task` (most recent) so any old client still works.
     return NextResponse.json(
-      { task: { id: task.id, targetUrl: task.targetUrl, status: task.status } },
+      { task: list[0] ?? null, tasks: list },
       { status: 200 },
     );
   } catch (err) {
