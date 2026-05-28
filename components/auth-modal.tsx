@@ -9,22 +9,24 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { useStore } from '@/lib/store';
+import { useStore, useActiveTask } from '@/lib/store';
 
 const inputCls =
   'rounded-lg border border-zinc-700 bg-zinc-800/60 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 backdrop-blur-xl focus:border-cyan-500 focus:outline-none';
 const labelCls = 'text-xs text-zinc-400 font-mono';
 
 export function AuthModal() {
-  const scanStatus = useStore((s) => s.scanStatus);
-  const authPageUrl = useStore((s) => s.authPageUrl);
-  const currentTaskId = useStore((s) => s.currentTaskId);
-  const captchaType = useStore((s) => s.captchaType);
-  const captchaImageBase64 = useStore((s) => s.captchaImageBase64);
+  const active = useActiveTask();
   const setScanStatus = useStore((s) => s.setScanStatus);
   const setAuthPageUrl = useStore((s) => s.setAuthPageUrl);
   const setCaptchaType = useStore((s) => s.setCaptchaType);
   const setCaptchaImageBase64 = useStore((s) => s.setCaptchaImageBase64);
+
+  const scanStatus = active?.scanStatus ?? 'idle';
+  const authPageUrl = active?.authPageUrl ?? null;
+  const currentTaskId = active?.taskId ?? null;
+  const captchaType = active?.captchaType ?? null;
+  const captchaImageBase64 = active?.captchaImageBase64 ?? null;
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -36,12 +38,12 @@ export function AuthModal() {
 
   // Slider: auto-close when scan resumes
   useEffect(() => {
-    if (captchaType === 'slider' && scanStatus === 'running') {
-      setAuthPageUrl(null);
-      setCaptchaType(null);
-      setCaptchaImageBase64(null);
+    if (captchaType === 'slider' && scanStatus === 'running' && currentTaskId) {
+      setAuthPageUrl(currentTaskId, null);
+      setCaptchaType(currentTaskId, null);
+      setCaptchaImageBase64(currentTaskId, null);
     }
-  }, [scanStatus, captchaType, setAuthPageUrl, setCaptchaType, setCaptchaImageBase64]);
+  }, [scanStatus, captchaType, currentTaskId, setAuthPageUrl, setCaptchaType, setCaptchaImageBase64]);
 
   function handleOpenChange(next: boolean) {
     if (!next) return; // prevent external close
@@ -52,9 +54,11 @@ export function AuthModal() {
     setPassword('');
     setCaptchaCode('');
     setError(null);
-    setAuthPageUrl(null);
-    setCaptchaType(null);
-    setCaptchaImageBase64(null);
+    if (currentTaskId) {
+      setAuthPageUrl(currentTaskId, null);
+      setCaptchaType(currentTaskId, null);
+      setCaptchaImageBase64(currentTaskId, null);
+    }
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -92,7 +96,7 @@ export function AuthModal() {
       }
 
       clearState();
-      setScanStatus('running');
+      setScanStatus(currentTaskId, 'running');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error');
     } finally {

@@ -12,27 +12,28 @@ function SSEMount(): null {
   return null;
 }
 
+type ActiveTask = { id: string; targetUrl: string; status: string };
+
 function StateHydrator(): null {
-  const setCurrentTaskId = useStore((s) => s.setCurrentTaskId);
-  const setScanStatus = useStore((s) => s.setScanStatus);
+  const upsertTask = useStore((s) => s.upsertTask);
+  const setActiveTaskId = useStore((s) => s.setActiveTaskId);
 
   useEffect(() => {
     void (async () => {
       try {
         const res = await fetch('/api/scan/active');
         if (!res.ok) return;
-        const json = (await res.json()) as {
-          task: { id: string; targetUrl: string; status: string } | null;
-        };
-        if (json.task) {
-          setCurrentTaskId(json.task.id);
-          setScanStatus(json.task.status as ScanStatus);
+        const json = (await res.json()) as { tasks?: ActiveTask[]; task: ActiveTask | null };
+        const list = json.tasks ?? (json.task ? [json.task] : []);
+        for (const t of list) {
+          upsertTask(t.id, t.targetUrl, t.status as ScanStatus);
         }
+        if (list.length > 0) setActiveTaskId(list[0].id);
       } catch {
         // non-critical — silently ignore
       }
     })();
-  }, [setCurrentTaskId, setScanStatus]);
+  }, [upsertTask, setActiveTaskId]);
 
   return null;
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useStore } from '@/lib/store';
+import { useActiveTask } from '@/lib/store';
 import type { LogEntry } from '@/lib/types';
 
 const levelStyles: Record<LogEntry['level'], string> = {
@@ -63,7 +63,8 @@ function TimelineEntry({ entry }: { entry: LogEntry }) {
 }
 
 export default function ExecutionTimeline() {
-  const logs = useStore((s) => s.logs);
+  const active = useActiveTask();
+  const logs = active?.logs ?? [];
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

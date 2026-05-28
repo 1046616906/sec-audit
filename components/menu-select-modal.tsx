@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useStore } from '@/lib/store';
+import { useStore, useActiveTask } from '@/lib/store';
 import type { MenuItem } from '@/lib/types';
 import {
   Dialog,
@@ -12,15 +12,16 @@ import {
 } from '@/components/ui/dialog';
 
 export function MenuSelectModal() {
-  const scanStatus = useStore((s) => s.scanStatus);
-  const menuItems = useStore((s) => s.menuItems);
-  const currentTaskId = useStore((s) => s.currentTaskId);
+  const active = useActiveTask();
   const setScanStatus = useStore((s) => s.setScanStatus);
   const setMenuItems = useStore((s) => s.setMenuItems);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
 
+  const scanStatus = active?.scanStatus ?? 'idle';
+  const menuItems = active?.menuItems ?? [];
+  const currentTaskId = active?.taskId ?? null;
   const isOpen = scanStatus === 'menu_select';
 
   function toggleItem(id: string) {
@@ -50,8 +51,8 @@ export function MenuSelectModal() {
         body: JSON.stringify({ taskId: currentTaskId, selectedIds: [...selected] }),
       });
       setSelected(new Set());
-      setMenuItems([]);
-      setScanStatus('running');
+      setMenuItems(currentTaskId, []);
+      setScanStatus(currentTaskId, 'running');
     } finally {
       setSubmitting(false);
     }
@@ -64,8 +65,8 @@ export function MenuSelectModal() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ taskId: currentTaskId, selectedIds: [] }),
     });
-    setMenuItems([]);
-    setScanStatus('running');
+    setMenuItems(currentTaskId, []);
+    setScanStatus(currentTaskId, 'running');
   }
 
   return (

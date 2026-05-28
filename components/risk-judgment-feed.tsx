@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { useStore } from '@/lib/store';
+import { useActiveTask } from '@/lib/store';
 import type { RiskEntry } from '@/lib/types';
 import { Progress } from '@/components/ui/progress';
 
@@ -107,7 +107,8 @@ function RiskCard({ entry }: { entry: RiskEntry }) {
 }
 
 export function RiskJudgmentFeed() {
-  const risks = useStore((s) => s.risks);
+  const active = useActiveTask();
+  const risks = active?.risks ?? [];
 
   return (
     <div className="flex flex-col h-full">

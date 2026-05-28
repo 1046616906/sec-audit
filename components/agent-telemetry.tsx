@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, type Variants } from 'framer-motion';
-import { useStore } from '@/lib/store';
+import { useActiveTask } from '@/lib/store';
 import type { SitemapNode } from '@/lib/types';
 
 // Breathing pulse animation for active status dots
@@ -96,8 +96,13 @@ function SitemapNodeItem({ node, depth }: SitemapNodeItemProps) {
 }
 
 export default function AgentTelemetry() {
-  const telemetry_status = useStore((s) => s.telemetry_status);
-  const sitemapNodes = useStore((s) => s.sitemapNodes);
+  const active = useActiveTask();
+  const telemetry_status = active?.telemetry_status ?? {
+    aiDomParsing: false,
+    autoLoginDetection: false,
+    deepIntercepting: false,
+  };
+  const sitemapNodes = active?.sitemapNodes ?? [];
 
   return (
     <div

@@ -4,15 +4,16 @@ import { useEffect } from 'react';
 import { useStore } from '@/lib/store';
 import type { LogEntry, RiskEntry, TelemetryStatus, SitemapNode, MenuItem, AuthRequiredEvent } from '@/lib/types';
 
+/** Every event emitted by the worker is tagged with taskId. */
 type SSEMessage =
-  | { type: 'LOG'; data: LogEntry }
-  | { type: 'RISK'; data: RiskEntry }
-  | { type: 'FRAME'; data: { base64: string } }
-  | { type: 'TELEMETRY'; data: Partial<TelemetryStatus> }
-  | { type: 'SITEMAP'; data: { node: SitemapNode } }
-  | { type: 'SCAN_DONE'; data: Record<string, never> }
-  | { type: 'AUTH_REQUIRED'; data: AuthRequiredEvent }
-  | { type: 'MENU_DISCOVERED'; data: { items: MenuItem[] } };
+  | { type: 'LOG'; taskId: string; data: LogEntry }
+  | { type: 'RISK'; taskId: string; data: RiskEntry }
+  | { type: 'FRAME'; taskId: string; data: { base64: string } }
+  | { type: 'TELEMETRY'; taskId: string; data: Partial<TelemetryStatus> }
+  | { type: 'SITEMAP'; taskId: string; data: { node: SitemapNode } }
+  | { type: 'SCAN_DONE'; taskId: string; data: Record<string, never> }
+  | { type: 'AUTH_REQUIRED'; taskId: string; data: AuthRequiredEvent }
+  | { type: 'MENU_DISCOVERED'; taskId: string; data: { items: MenuItem[] } };
 
 export function useSSE(): void {
   const addLog = useStore((s) => s.addLog);
@@ -27,6 +28,7 @@ export function useSSE(): void {
   const setCaptchaImageBase64 = useStore((s) => s.setCaptchaImageBase64);
 
   useEffect(() => {
+    // No taskId param → receive the firehose; we route per-event by taskId.
     const es = new EventSource('/api/events');
 
     es.onmessage = (event: MessageEvent<string>) => {
@@ -37,34 +39,37 @@ export function useSSE(): void {
         return;
       }
 
+      const taskId = msg.taskId;
+      if (typeof taskId !== 'string' || !taskId) return; // legacy/untagged event — drop
+
       switch (msg.type) {
         case 'LOG':
-          addLog(msg.data);
+          addLog(taskId, msg.data);
           break;
         case 'RISK':
-          addRisk(msg.data);
+          addRisk(taskId, msg.data);
           break;
         case 'FRAME':
-          setLiveFrame(msg.data.base64);
+          setLiveFrame(taskId, msg.data.base64);
           break;
         case 'TELEMETRY':
-          setTelemetry(msg.data);
+          setTelemetry(taskId, msg.data);
           break;
         case 'SITEMAP':
-          upsertSitemapNode(msg.data.node);
+          upsertSitemapNode(taskId, msg.data.node);
           break;
         case 'SCAN_DONE':
-          setScanStatus('done');
+          setScanStatus(taskId, 'done');
           break;
         case 'AUTH_REQUIRED':
-          setScanStatus('paused');
-          setAuthPageUrl(msg.data.pageUrl);
-          setCaptchaType(msg.data.captchaType);
-          setCaptchaImageBase64(msg.data.captchaImageBase64 ?? null);
+          setScanStatus(taskId, 'paused');
+          setAuthPageUrl(taskId, msg.data.pageUrl);
+          setCaptchaType(taskId, msg.data.captchaType);
+          setCaptchaImageBase64(taskId, msg.data.captchaImageBase64 ?? null);
           break;
         case 'MENU_DISCOVERED':
-          setMenuItems(msg.data.items);
-          setScanStatus('menu_select');
+          setMenuItems(taskId, msg.data.items);
+          setScanStatus(taskId, 'menu_select');
           break;
       }
     };
