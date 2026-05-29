@@ -19,6 +19,8 @@ RUN apk add --no-cache \
     harfbuzz \
     ca-certificates \
     ttf-freefont \
+    openssl \
+    libc6-compat \
     && rm -rf /var/cache/apk/*
 
 COPY --from=deps /app/node_modules ./node_modules

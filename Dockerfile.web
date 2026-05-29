@@ -26,6 +26,9 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
+# Prisma on Alpine needs openssl + libc6-compat
+RUN apk add --no-cache openssl libc6-compat
+
 # Next.js standalone bundle (already contains node_modules + Prisma client)
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
